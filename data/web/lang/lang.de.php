@@ -797,7 +797,7 @@ $lang['debug']['disk_usage'] = 'Festplattenauslastung';
 $lang['debug']['containers_info'] = "Container-Informationen";
 
 $lang['debug']['disk_space'] = "Verfügbarer Speicherplatz:";
-$lang['debug']['disk_used'] = "Von Mailboxen belegter Speicherplatz:";
+$lang['debug']['disk_used'] = "Belegter Festplattenspeicher:";
 $lang['debug']['total_quota'] = "Zugewiesener Domain-Speicherplatz:";
 
 $lang['quarantine']['release_body'] = "Die ursprüngliche Nachricht wurde als EML-Datei im Anhang hinterlegt.";

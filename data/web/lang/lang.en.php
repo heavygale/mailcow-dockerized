@@ -823,7 +823,7 @@ $lang['debug']['containers_info'] = "Container information";
 $lang['debug']['restart_container'] = 'Restart';
 
 $lang['debug']['disk_space'] = "Available disk space:";
-$lang['debug']['disk_used'] = "Disk space occupied by mailboxes:";
+$lang['debug']['disk_used'] = "Occupied disk space:";
 $lang['debug']['total_quota'] = "Total amount of assigned domain quota:";
 
 $lang['quarantine']['release_body'] = "We have attached your message as eml file to this message.";

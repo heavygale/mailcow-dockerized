@@ -44,7 +44,7 @@ else {
           $exec_fields = array('cmd' => 'system', 'task' => 'df', 'dir' => '/var/vmail');
           $vmail_df = explode(',', json_decode(docker('post', 'dovecot-mailcow', 'exec', $exec_fields), true));
           $used_percent = substr($vmail_df[4], 0, -1);
-          $quota_stats = mailbox('get','quota_stats');
+          $quota_stats = mailbox('get','quota_stats'); //todo wie ist es mit unlimited-großen domain-quotas?
           $quotaPercent1 = round(($quota_stats['total_quota']/$vmail_df[1])*100);
           $quotaPercent2 = round((($quota_stats['total_quota']-$quota_stats['used_bytes'])/$vmail_df[1])*100);
           $quotaPercent2 = ($quotaPercent2+$used_percent>100) ? 100-$used_percent : $quotaPercent2;
