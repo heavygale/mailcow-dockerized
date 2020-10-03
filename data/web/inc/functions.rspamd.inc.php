@@ -62,7 +62,7 @@ function rsettings($_action, $_data = null) {
         if (!empty($is_now)) {
           $content = (!empty($_data['content'])) ? $_data['content'] : $is_now['content'];
           $desc = (!empty($_data['desc'])) ? $_data['desc'] : $is_now['desc'];
-          $active = (isset($_data['active'])) ? intval($_data['active']) : $is_now['active_int'];
+          $active = (isset($_data['active'])) ? intval($_data['active']) : $is_now['active'];
         }
         else {
           $_SESSION['return'][] = array(
@@ -148,8 +148,7 @@ function rsettings($_action, $_data = null) {
       $stmt = $pdo->prepare("SELECT `id`,
         `desc`,
         `content`,
-        `active` AS `active_int`,
-        CASE `active` WHEN 1 THEN '".$lang['mailbox']['yes']."' ELSE '".$lang['mailbox']['no']."' END AS `active`
+        `active`
           FROM `settingsmap`
             WHERE `id` = :id");
       $stmt->execute(array(':id' => $_data));
@@ -218,20 +217,22 @@ function rspamd($_action, $_data = null) {
       }
       $maps = (array)$_data['map'];
       foreach ($maps as $map) {
-        if (!in_array($map, $RSPAMD_MAPS)) {
-          $_SESSION['return'][] = array(
-            'type' => 'danger',
-            'log' => array(__FUNCTION__, $_action, $_data_log),
-            'msg' => array('global_map_invalid', $map)
-          );
-          continue;
+        foreach ($RSPAMD_MAPS as $rspamd_map_type) {
+          if (!in_array($map, $rspamd_map_type)) {
+            $_SESSION['return'][] = array(
+              'type' => 'danger',
+              'log' => array(__FUNCTION__, $_action, $_data_log),
+              'msg' => array('global_map_invalid', $map)
+            );
+            continue;
+          }
         }
         try {
           if (file_exists('/rspamd_custom_maps/' . $map)) {
             $map_content = trim($_data['rspamd_map_data']);
             $map_handle = fopen('/rspamd_custom_maps/' . $map, 'w');
             if (!$map_handle) {
-              throw new Exception('File cannot be opened for writing.');
+              throw new Exception($lang['danger']['file_open_error']);
             }
             fwrite($map_handle, $map_content . PHP_EOL);
             fclose($map_handle);
@@ -301,8 +302,7 @@ function rspamd($_action, $_data = null) {
       $stmt = $pdo->prepare("SELECT `id`,
         `desc`,
         `content`,
-        `active` AS `active_int`,
-        CASE `active` WHEN 1 THEN '".$lang['mailbox']['yes']."' ELSE '".$lang['mailbox']['no']."' END AS `active`
+        `active`
           FROM `settingsmap`
             WHERE `id` = :id");
       $stmt->execute(array(':id' => $_data));

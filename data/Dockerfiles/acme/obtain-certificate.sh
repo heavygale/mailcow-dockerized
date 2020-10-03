@@ -32,15 +32,19 @@ if [[ -z ${CERT_DOMAINS[*]} ]]; then
 fi
 
 if [[ "${LE_STAGING}" =~ ^([yY][eE][sS]|[yY])+$ ]]; then
+  if [[ ! -z "${DIRECTORY_URL}" ]]; then
+    log_f "Cannot use DIRECTORY_URL with LE_STAGING=y - ignoring DIRECTORY_URL"
+  fi
   log_f "Using Let's Encrypt staging servers"
-  STAGING_PARAMETER='--directory-url https://acme-staging-v02.api.letsencrypt.org/directory'
-else
-  STAGING_PARAMETER=
+  DIRECTORY_URL='--directory-url https://acme-staging-v02.api.letsencrypt.org/directory'
+elif [[ ! -z "${DIRECTORY_URL}" ]]; then
+  log_f "Using custom directory URL ${DIRECTORY_URL}"
+  DIRECTORY_URL="--directory-url ${DIRECTORY_URL}"
 fi
 
 if [[ -f ${DOMAINS_FILE} && "$(cat ${DOMAINS_FILE})" ==  "${CERT_DOMAINS[*]}" ]]; then
-  if [[ ! -f ${CERT} || ! -f "${KEY}" ]]; then
-    log_f "Certificate ${CERT} doesn't exist yet - start obtaining"
+  if [[ ! -f ${CERT} || ! -f "${KEY}" || -f "${ACME_BASE}/force_renew" ]]; then
+    log_f "Certificate ${CERT} doesn't exist yet or forced renewal - start obtaining"
   # Certificate exists and did not change but could be due for renewal (30 days)
   elif ! openssl x509 -checkend 2592000 -noout -in ${CERT} > /dev/null; then
     log_f "Certificate ${CERT} is due for renewal (< 30 days) - start renewing"
@@ -84,7 +88,13 @@ openssl req -new -sha256 -key ${KEY} -subj "/" -reqexts SAN -config <(cat /etc/s
 # - redirect acme-tiny stderr to stdout (logs to variable ACME_RESPONSE)
 # - tee stderr to get live output and log to dockerd
 
-ACME_RESPONSE=$(acme-tiny ${STAGING_PARAMETER} \
+log_f "Checking resolver..."
+until dig letsencrypt.org +time=3 +tries=1 @unbound > /dev/null; do
+  sleep 2
+done
+log_f "Resolver OK"
+
+ACME_RESPONSE=$(acme-tiny ${DIRECTORY_URL} \
   --account-key ${ACME_BASE}/acme/account.pem \
   --disable-check \
   --csr ${CSR} \

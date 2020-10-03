@@ -11,7 +11,7 @@ if (isset($_SESSION['mailcow_cc_role']) && ($_SESSION['mailcow_cc_role'] == "adm
           <input type="text" class="form-control" name="key_id" placeholder="<?=$lang['tfa']['key_id'];?>" autocomplete="off" required>
         </div>
         <hr>
-        <p class="help-block"><?=$lang['tfa']['api_register'];?></p>
+        <p class="help-block"><?=sprintf($lang['tfa']['api_register'], $UI_TEXTS['main_name']);?></p>
         <div class="form-group">
           <input type="text" class="form-control" name="yubico_id" placeholder="Yubico API ID" autocomplete="off" required>
         </div>
@@ -178,7 +178,7 @@ if (isset($_SESSION['pending_tfa_method'])):
           <div class="form-group">
             <div class="input-group">
               <span class="input-group-addon" id="tfa-addon"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span></span>
-              <input type="number" min="000000" max="999999" name="token" class="form-control" placeholder="123456" aria-describedby="tfa-addon">
+              <input type="number" min="000000" max="999999" name="token" class="form-control" placeholder="123456" autocomplete="one-time-code" aria-describedby="tfa-addon">
               <input type="hidden" name="tfa_method" value="totp">
             </div>
           </div>
