@@ -88,6 +88,45 @@ rspamd_config:register_symbol({
 })
 
 rspamd_config:register_symbol({
+  name = 'POSTMASTER_HANDLER',
+  type = 'prefilter',
+  callback = function(task)
+  local rcpts = task:get_recipients('smtp')
+  local rspamd_logger = require "rspamd_logger"
+  local lua_util = require "lua_util"
+  local from = task:get_from(1)
+
+  -- not applying to mails with more than one rcpt to avoid bypassing filters by addressing postmaster
+  if rcpts and #rcpts == 1 then
+    for _,rcpt in ipairs(rcpts) do
+      local rcpt_split = rspamd_str_split(rcpt['addr'], '@')
+      if #rcpt_split == 2 then
+        if rcpt_split[1] == 'postmaster' then
+          task:set_pre_result('accept', 'whitelisting postmaster smtp rcpt')
+          return
+        end
+      end
+    end
+  end
+
+  if from then
+    for _,fr in ipairs(from) do
+      local fr_split = rspamd_str_split(fr['addr'], '@')
+      if #fr_split == 2 then
+        if fr_split[1] == 'postmaster' and task:get_user() then
+          -- no whitelist, keep signatures
+          task:insert_result(true, 'POSTMASTER_FROM', -2500.0)
+          return
+        end
+      end
+    end
+  end
+
+  end,
+  priority = 10
+})
+
+rspamd_config:register_symbol({
   name = 'KEEP_SPAM',
   type = 'prefilter',
   callback = function(task)
@@ -174,6 +213,10 @@ rspamd_config:register_symbol({
   callback = function(task)
     local util = require("rspamd_util")
     local rspamd_logger = require "rspamd_logger"
+    local redis_params = rspamd_parse_redis_server('taghandler')
+    local rspamd_http = require "rspamd_http"
+    local rcpts = task:get_recipients('smtp')
+    local lua_util = require "lua_util"
 
     local tagged_rcpt = task:get_symbol("TAGGED_RCPT")
     local mailcow_domain = task:get_symbol("RCPT_MAILCOW_DOMAIN")
@@ -186,30 +229,198 @@ rspamd_config:register_symbol({
 
       if action ~= 'no action' and action ~= 'greylist' then
         rspamd_logger.infox("skipping tag handler for action: %s", action)
-        task:set_metric_action('default', action)
         return true
       end
 
-      local wants_subject_tag = task:get_symbol("RCPT_WANTS_SUBJECT_TAG")
-      local wants_subfolder_tag = task:get_symbol("RCPT_WANTS_SUBFOLDER_TAG")
+      local function http_callback(err_message, code, body, headers)
+        if body ~= nil and body ~= "" then
+          rspamd_logger.infox(rspamd_config, "expanding rcpt to \"%s\"", body)
 
-      if wants_subject_tag then
-        rspamd_logger.infox("user wants subject modified for tagged mail")
-        local sbj = task:get_header('Subject')
-        new_sbj = '=?UTF-8?B?' .. tostring(util.encode_base64('[' .. tag .. '] ' .. sbj)) .. '?='
-        task:set_milter_reply({
-          remove_headers = {['Subject'] = 1},
-          add_headers = {['Subject'] = new_sbj}
-        })
-      elseif wants_subfolder_tag then
-        rspamd_logger.infox("Add X-Moo-Tag header")
-        task:set_milter_reply({
-          add_headers = {['X-Moo-Tag'] = 'YES'}
+          local function tag_callback_subject(err, data)
+            if err or type(data) ~= 'string' then
+              rspamd_logger.infox(rspamd_config, "subject tag handler rcpt %s returned invalid or empty data (\"%s\") or error (\"%s\") - trying subfolder tag handler...", body, data, err)
+
+              local function tag_callback_subfolder(err, data)
+                if err or type(data) ~= 'string' then
+                  rspamd_logger.infox(rspamd_config, "subfolder tag handler for rcpt %s returned invalid or empty data (\"%s\") or error (\"%s\")", body, data, err)
+                else
+                  rspamd_logger.infox("Add X-Moo-Tag header")
+                  task:set_milter_reply({
+                    add_headers = {['X-Moo-Tag'] = 'YES'}
+                  })
+                end
+              end
+
+              local redis_ret_subfolder = rspamd_redis_make_request(task,
+                redis_params, -- connect params
+                body, -- hash key
+                false, -- is write
+                tag_callback_subfolder, --callback
+                'HGET', -- command
+                {'RCPT_WANTS_SUBFOLDER_TAG', body} -- arguments
+              )
+              if not redis_ret_subfolder then
+                rspamd_logger.infox(rspamd_config, "cannot make request to load tag handler for rcpt")
+              end
+
+            else
+              rspamd_logger.infox("user wants subject modified for tagged mail")
+              local sbj = task:get_header('Subject')
+              new_sbj = '=?UTF-8?B?' .. tostring(util.encode_base64('[' .. tag .. '] ' .. sbj)) .. '?='
+              task:set_milter_reply({
+                remove_headers = {['Subject'] = 1},
+                add_headers = {['Subject'] = new_sbj}
+              })
+            end
+          end
+
+          local redis_ret_subject = rspamd_redis_make_request(task,
+            redis_params, -- connect params
+            body, -- hash key
+            false, -- is write
+            tag_callback_subject, --callback
+            'HGET', -- command
+            {'RCPT_WANTS_SUBJECT_TAG', body} -- arguments
+          )
+          if not redis_ret_subject then
+            rspamd_logger.infox(rspamd_config, "cannot make request to load tag handler for rcpt")
+          end
+
+        end
+      end
+
+      if rcpts and #rcpts == 1 then
+        for _,rcpt in ipairs(rcpts) do
+          local rcpt_split = rspamd_str_split(rcpt['addr'], '@')
+          if #rcpt_split == 2 then
+            if rcpt_split[1] == 'postmaster' then
+              rspamd_logger.infox(rspamd_config, "not expanding postmaster alias")
+            else
+              rspamd_http.request({
+                task=task,
+                url='http://nginx:8081/aliasexp.php',
+                body='',
+                callback=http_callback,
+                headers={Rcpt=rcpt['addr']},
+              })
+            end
+          end
+        end
+      end
+
+    end
+  end,
+  priority = 19
+})
+
+rspamd_config:register_symbol({
+  name = 'BCC',
+  type = 'postfilter',
+  callback = function(task)
+    local util = require("rspamd_util")
+    local rspamd_http = require "rspamd_http"
+    local rspamd_logger = require "rspamd_logger"
+
+    local from_table = {}
+    local rcpt_table = {}
+
+    if task:has_symbol('ENCRYPTED_CHAT') then
+      return -- stop
+    end
+
+    local send_mail = function(task, bcc_dest)
+      local lua_smtp = require "lua_smtp"
+      local function sendmail_cb(ret, err)
+        if not ret then
+          rspamd_logger.errx(task, 'BCC SMTP ERROR: %s', err)
+        else
+          rspamd_logger.infox(rspamd_config, "BCC SMTP SUCCESS TO %s", bcc_dest)
+        end
+      end
+      if not bcc_dest then
+        return -- stop
+      end
+      lua_smtp.sendmail({
+        task = task,
+        host = os.getenv("IPV4_NETWORK") .. '.253',
+        port = 591,
+        from = task:get_from(stp)[1].addr,
+        recipients = bcc_dest,
+        helo = 'bcc',
+        timeout = 10,
+      }, task:get_content(), sendmail_cb)
+    end
+
+    -- determine from
+    local from = task:get_from('smtp')
+    if from then
+      for _, a in ipairs(from) do
+        table.insert(from_table, a['addr']) -- add this rcpt to table
+        table.insert(from_table, '@' .. a['domain']) -- add this rcpts domain to table
+      end
+    else
+      return -- stop
+    end
+
+    -- determine rcpts
+    local rcpts = task:get_recipients('smtp')
+    if rcpts then
+      for _, a in ipairs(rcpts) do
+        table.insert(rcpt_table, a['addr']) -- add this rcpt to table
+        table.insert(rcpt_table, '@' .. a['domain']) -- add this rcpts domain to table
+      end
+    else
+      return -- stop
+    end
+
+    local action = task:get_metric_action('default')
+    rspamd_logger.infox("metric action now: %s", action)
+
+    local function rcpt_callback(err_message, code, body, headers)
+      if err_message == nil and code == 201 and body ~= nil then
+        if action == 'no action' or action == 'add header' or action == 'rewrite subject' then
+          send_mail(task, body)
+        end
+      end
+    end
+
+    local function from_callback(err_message, code, body, headers)
+      if err_message == nil and code == 201 and body ~= nil then
+        if action == 'no action' or action == 'add header' or action == 'rewrite subject' then
+          send_mail(task, body)
+        end
+      end
+    end
+
+    if rcpt_table then
+      for _,e in ipairs(rcpt_table) do
+        rspamd_logger.infox(rspamd_config, "checking bcc for rcpt address %s", e)
+        rspamd_http.request({
+          task=task,
+          url='http://nginx:8081/bcc.php',
+          body='',
+          callback=rcpt_callback,
+          headers={Rcpt=e}
         })
       end
     end
+
+    if from_table then
+      for _,e in ipairs(from_table) do
+        rspamd_logger.infox(rspamd_config, "checking bcc for from address %s", e)
+        rspamd_http.request({
+          task=task,
+          url='http://nginx:8081/bcc.php',
+          body='',
+          callback=from_callback,
+          headers={From=e}
+        })
+      end
+    end
+
+    return true
   end,
-  priority = 11
+  priority = 20
 })
 
 rspamd_config:register_symbol({
@@ -282,7 +493,7 @@ rspamd_config:register_symbol({
   type = 'postfilter',
   callback = function(task)
     local from = task:get_header('From')
-    if from and monitoring_hosts:get_key(from) then
+    if from and (monitoring_hosts:get_key(from) or from == "watchdog@localhost") then
       task:set_flag('no_log')
       task:set_flag('no_stat')
     end
